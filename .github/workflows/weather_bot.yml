@@ -1,0 +1,92 @@
+name: Polymarket Weather Autonomous Trading Bot
+
+on:
+  schedule:
+    # 4 Synoptic model drop windows (UTC):
+    # 03:45 UTC (00z run drop)
+    - cron: '45 3 * * *'
+    # 09:45 UTC (06z run drop)
+    - cron: '45 9 * * *'
+    # 16:00 UTC (12z run drop - ECMWF primary)
+    - cron: '0 16 * * *'
+    # 21:45 UTC (18z run drop)
+    - cron: '45 21 * * *'
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to execute'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - scan
+          - grade
+          - report
+          - selftest
+      live_mode:
+        description: 'Enable live trading (requires secrets configured)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Offline Verification
+        run: |
+          python src/main.py selftest
+
+      - name: Execute Trading Workflow
+        env:
+          LIVE: ${{ github.event.inputs.live_mode == 'true' && '1' || vars.LIVE || '0' }}
+          FORCE_LIVE: ${{ vars.FORCE_LIVE || '0' }}
+          POLY_PRIVATE_KEY: ${{ secrets.POLY_PRIVATE_KEY }}
+          POLY_API_KEY: ${{ secrets.POLY_API_KEY }}
+          POLY_API_SECRET: ${{ secrets.POLY_API_SECRET }}
+          POLY_API_PASSPHRASE: ${{ secrets.POLY_API_PASSPHRASE }}
+          MIN_EDGE_AFTER_FEE: ${{ vars.MIN_EDGE_AFTER_FEE || '0.04' }}
+        run: |
+          ACTION="${{ github.event.inputs.action || 'all' }}"
+          echo "Executing action: $ACTION with LIVE=$LIVE"
+          if [ "$ACTION" = "selftest" ]; then
+            python src/main.py selftest
+          elif [ "$ACTION" = "grade" ]; then
+            python src/main.py grade
+          elif [ "$ACTION" = "scan" ]; then
+            python src/main.py scan
+          elif [ "$ACTION" = "report" ]; then
+            python src/main.py report
+          else
+            # Default pipeline: Grade settled -> Scan & trade -> Report
+            python src/main.py grade
+            python src/main.py scan
+            python src/main.py report
+          fi
+
+      - name: Commit and Push State Updates
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Automated trade state sync [skip ci]"
+          file_pattern: "data/*"
