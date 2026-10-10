@@ -10,7 +10,14 @@ Commands:
 
 from __future__ import annotations
 import argparse
+import pathlib
 import sys
+
+# Ensure repository root is in sys.path
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import src.paper as paper
 from src.scanner import scan_and_execute, grade_settled_trades
 from src.config import LIVE, FORCE_LIVE
