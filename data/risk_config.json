@@ -1,0 +1,8 @@
+{
+  "bankroll": 1000.0,
+  "kelly_fraction": 0.25,
+  "per_trade_cap_pct": 0.02,
+  "per_market_cap_pct": 0.05,
+  "daily_loss_limit_pct": 0.05,
+  "min_stake": 1.0
+}
