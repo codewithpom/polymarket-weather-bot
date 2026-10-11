@@ -67,6 +67,8 @@ jobs:
           POLY_API_SECRET: ${{ secrets.POLY_API_SECRET }}
           POLY_API_PASSPHRASE: ${{ secrets.POLY_API_PASSPHRASE }}
           MIN_EDGE_AFTER_FEE: ${{ vars.MIN_EDGE_AFTER_FEE || '0.04' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           ACTION="${{ github.event.inputs.action || 'all' }}"
           echo "Executing action: $ACTION with LIVE=$LIVE"

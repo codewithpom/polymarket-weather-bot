@@ -21,6 +21,19 @@ if str(ROOT) not in sys.path:
 import src.paper as paper
 from src.scanner import scan_and_execute, grade_settled_trades
 from src.config import LIVE, FORCE_LIVE
+import src.supabase_sync as supabase_sync
+
+
+def _trigger_sync() -> None:
+    """Trigger graceful Supabase sync if credentials are configured."""
+    try:
+        url, key = supabase_sync.get_credentials()
+        if url and key:
+            print("Syncing trades to Supabase...")
+            count = supabase_sync.sync_trades()
+            print(f"Supabase sync complete: {count} trades synced.")
+    except Exception as e:
+        print(f"Warning: Supabase sync failed gracefully: {e}")
 
 
 def run_selftest() -> bool:
@@ -48,29 +61,31 @@ def main():
         sys.exit(0 if success else 1)
 
     con = paper.connect()
+    try:
+        if args.command == "scan":
+            is_live = bool(args.live or LIVE)
+            print(f"Starting market scan (Mode: {'LIVE' if is_live else 'PAPER'})...")
+            count = scan_and_execute(con, is_live=is_live)
+            print(f"Scan complete. Trades executed: {count}")
+        elif args.command == "grade":
+            print("Grading settled trades from station truth...")
+            count = grade_settled_trades(con)
+            print(f"Grading complete. Trades settled: {count}")
+            paper.report(con)
+        elif args.command == "report":
+            paper.report(con)
+        else:
+            # Default behavior: grade, scan, report
+            print("Default pipeline: Grade -> Scan -> Report")
+            g_count = grade_settled_trades(con)
+            print(f"Settled {g_count} trades.")
+            s_count = scan_and_execute(con, is_live=bool(LIVE))
+            print(f"Executed {s_count} trades.")
+            paper.report(con)
+    finally:
+        con.close()
 
-    if args.command == "scan":
-        is_live = bool(args.live or LIVE)
-        print(f"Starting market scan (Mode: {'LIVE' if is_live else 'PAPER'})...")
-        count = scan_and_execute(con, is_live=is_live)
-        print(f"Scan complete. Trades executed: {count}")
-    elif args.command == "grade":
-        print("Grading settled trades from station truth...")
-        count = grade_settled_trades(con)
-        print(f"Grading complete. Trades settled: {count}")
-        paper.report(con)
-    elif args.command == "report":
-        paper.report(con)
-    else:
-        # Default behavior: grade, scan, report
-        print("Default pipeline: Grade -> Scan -> Report")
-        g_count = grade_settled_trades(con)
-        print(f"Settled {g_count} trades.")
-        s_count = scan_and_execute(con, is_live=bool(LIVE))
-        print(f"Executed {s_count} trades.")
-        paper.report(con)
-
-    con.close()
+    _trigger_sync()
 
 
 if __name__ == "__main__":
