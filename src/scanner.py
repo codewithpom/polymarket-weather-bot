@@ -15,8 +15,9 @@ from urllib3.util.retry import Retry
 from src.config import (
     GAMMA_API, CLOB_API, ENSEMBLE_API, ENSEMBLE_MODELS,
     RESOLUTION_SOURCES, CITY_CALIB, MODEL_COORDS, BUCKET_WIDTH,
-    MIN_EDGE_AFTER_FEE
+    MIN_EDGE_AFTER_FEE, USE_AWS_DIRECT,
 )
+from src.aws_weather import aws_gefs_daily_max
 from src.fees import taker_fee
 from src.station_truth import daily_max_range, daily_max, NoStationData
 from src.weather_model import ensemble_bucket_prob, tail_risk_filter
@@ -112,11 +113,36 @@ def best_prices(token_id: str) -> tuple[float | None, float | None]:
         return None, None
 
 
-def ensemble_daily_max(lat: float, lon: float, date: str, unit: str, timeout: int = 45) -> list[float]:
+def ensemble_daily_max(
+    lat: float,
+    lon: float,
+    date: str,
+    unit: str,
+    timeout: int = 45,
+    city: str | None = None,
+) -> list[float]:
     """Retrieves all ensemble members daily max for date with retry, caching, and fallback."""
     cache_key = (round(lat, 4), round(lon, 4), date, unit)
     if cache_key in _ENSEMBLE_CACHE:
         return _ENSEMBLE_CACHE[cache_key]
+
+    if USE_AWS_DIRECT:
+        target_city = city
+        if not target_city:
+            for c, coords in MODEL_COORDS.items():
+                if abs(lat - coords[0]) < 0.05 and abs(lon - coords[1]) < 0.05:
+                    target_city = c
+                    break
+        if target_city:
+            try:
+                aws_members = aws_gefs_daily_max(target_city, date, unit)
+                if aws_members:
+                    _ENSEMBLE_CACHE[cache_key] = aws_members
+                    return aws_members
+                else:
+                    print("[AWS Direct] Fallback to Open-Meteo: no members returned")
+            except Exception as e:
+                print(f"[AWS Direct] Fallback to Open-Meteo: {e}")
 
     params = {
         "latitude": lat, "longitude": lon,
@@ -197,7 +223,7 @@ def scan_and_execute(con: sqlite3.Connection, is_live: bool = False) -> int:
             continue
 
         try:
-            members = ensemble_daily_max(lat, lon, mdate, unit)
+            members = ensemble_daily_max(lat, lon, mdate, unit, city=city)
         except Exception as e:
             print(f"[skip] {title}: ensemble error ({e})")
             continue

@@ -23,6 +23,9 @@ CONFIG_FILE = DATA_DIR / "risk_config.json"
 LIVE = int(os.getenv("LIVE", "0"))
 FORCE_LIVE = int(os.getenv("FORCE_LIVE", "0"))
 MIN_EDGE_AFTER_FEE = float(os.getenv("MIN_EDGE_AFTER_FEE", "0.04"))
+USE_AWS_DIRECT = int(os.getenv("USE_AWS_DIRECT", "1"))
+AWS_GEFS_S3_BASE = "https://noaa-gefs-pds.s3.amazonaws.com"
+AWS_GEFS_MEMBERS = int(os.getenv("AWS_GEFS_MEMBERS", "30"))
 
 # API Endpoints
 GAMMA_API = "https://gamma-api.polymarket.com"
