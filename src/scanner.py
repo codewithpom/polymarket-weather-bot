@@ -6,8 +6,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
-import requests
 import sqlite3
+import time
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from src.config import (
     GAMMA_API, CLOB_API, ENSEMBLE_API, ENSEMBLE_MODELS,
@@ -22,6 +25,21 @@ import src.paper as paper
 import src.executor as executor
 
 STRATEGY = "weather_extreme"
+
+# Configure reusable HTTP session with connection pooling and retry adapter
+_SESSION = requests.Session()
+_retries = Retry(
+    total=3,
+    backoff_factor=1.0,
+    status_forcelist=[429, 500, 502, 503, 504],
+    raise_on_status=False,
+)
+_adapter = HTTPAdapter(max_retries=_retries, pool_connections=10, pool_maxsize=20)
+_SESSION.mount("https://", _adapter)
+_SESSION.mount("http://", _adapter)
+
+# In-memory ensemble cache for the scan run to avoid duplicate queries
+_ENSEMBLE_CACHE: dict[tuple[float, float, str, str], list[float]] = {}
 
 BUCKET_RE = re.compile(
     r"(?:(-?\d+)\s*(?:°|deg)?\s*[CF]?\s*or (?:below|lower|less))|"
@@ -63,7 +81,7 @@ def fetch_temp_events() -> list[dict]:
     out, offset = [], 0
     while True:
         try:
-            r = requests.get(f"{GAMMA_API}/events", params={
+            r = _SESSION.get(f"{GAMMA_API}/events", params={
                 "closed": "false", "limit": 100, "offset": offset,
                 "tag_slug": "weather",
             }, timeout=30)
@@ -83,7 +101,7 @@ def fetch_temp_events() -> list[dict]:
 
 def best_prices(token_id: str) -> tuple[float | None, float | None]:
     try:
-        r = requests.get(f"{CLOB_API}/book", params={"token_id": token_id}, timeout=15)
+        r = _SESSION.get(f"{CLOB_API}/book", params={"token_id": token_id}, timeout=15)
         if r.status_code != 200:
             return None, None
         book = r.json()
@@ -94,23 +112,57 @@ def best_prices(token_id: str) -> tuple[float | None, float | None]:
         return None, None
 
 
-def ensemble_daily_max(lat: float, lon: float, date: str, unit: str) -> list[float]:
-    """Retrieves all ensemble members daily max for date."""
-    r = requests.get(ENSEMBLE_API, params={
+def ensemble_daily_max(lat: float, lon: float, date: str, unit: str, timeout: int = 45) -> list[float]:
+    """Retrieves all ensemble members daily max for date with retry, caching, and fallback."""
+    cache_key = (round(lat, 4), round(lon, 4), date, unit)
+    if cache_key in _ENSEMBLE_CACHE:
+        return _ENSEMBLE_CACHE[cache_key]
+
+    params = {
         "latitude": lat, "longitude": lon,
         "models": ENSEMBLE_MODELS,
         "hourly": "temperature_2m",
         "temperature_unit": unit,
         "start_date": date, "end_date": date,
         "timezone": "auto",
-    }, timeout=30)
-    r.raise_for_status()
-    hourly = r.json().get("hourly", {})
-    maxes = []
-    for key, vals in hourly.items():
-        if key.startswith("temperature_2m") and vals and any(v is not None for v in vals):
-            maxes.append(max(v for v in vals if v is not None))
-    return maxes
+    }
+
+    # Attempt primary models with retry on timeout/network error
+    last_err: Exception | None = None
+    for attempt in range(2):
+        try:
+            r = _SESSION.get(ENSEMBLE_API, params=params, timeout=timeout)
+            r.raise_for_status()
+            hourly = r.json().get("hourly", {})
+            maxes = []
+            for key, vals in hourly.items():
+                if key.startswith("temperature_2m") and vals and any(v is not None for v in vals):
+                    maxes.append(max(v for v in vals if v is not None))
+            if maxes:
+                _ENSEMBLE_CACHE[cache_key] = maxes
+                return maxes
+        except Exception as exc:
+            last_err = exc
+            time.sleep(1.5 * (attempt + 1))
+
+    # Core fallback: if full 4-model query timed out or failed, query ECMWF + GFS
+    try:
+        fallback_params = dict(params)
+        fallback_params["models"] = "ecmwf_ifs025,gfs_seamless"
+        r = _SESSION.get(ENSEMBLE_API, params=fallback_params, timeout=timeout)
+        r.raise_for_status()
+        hourly = r.json().get("hourly", {})
+        maxes = []
+        for key, vals in hourly.items():
+            if key.startswith("temperature_2m") and vals and any(v is not None for v in vals):
+                maxes.append(max(v for v in vals if v is not None))
+        if maxes:
+            _ENSEMBLE_CACHE[cache_key] = maxes
+            return maxes
+    except Exception as exc:
+        last_err = exc
+
+    raise last_err or RuntimeError("No ensemble data received")
 
 
 def scan_and_execute(con: sqlite3.Connection, is_live: bool = False) -> int:
@@ -123,6 +175,7 @@ def scan_and_execute(con: sqlite3.Connection, is_live: bool = False) -> int:
     events = fetch_temp_events()
     print(f"Found {len(events)} active highest temperature events.")
     trades_executed = 0
+    today_iso = dt.date.today().isoformat()
 
     for event in events:
         title = event.get("title", "")
@@ -137,6 +190,10 @@ def scan_and_execute(con: sqlite3.Connection, is_live: bool = False) -> int:
         unit = "celsius" if src["unit"] == "C" else "fahrenheit"
         mdate = _extract_date(title)
         if not mdate:
+            continue
+
+        # Skip events whose date has already passed (resolution is handled by grade_settled_trades)
+        if mdate < today_iso:
             continue
 
         try:
