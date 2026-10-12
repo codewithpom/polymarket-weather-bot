@@ -53,11 +53,13 @@ HUBS = [
 ]
 
 
-def render_ascii_globe(theta: float, radius_y: int = 8, radius_x: int = 17) -> list[str]:
+def render_ascii_globe(theta: float, zoom: float = 1.0, radius_y: int = 7, radius_x: int = 15) -> list[str]:
     """
-    Renders an orthographic 3D ASCII/Unicode holographic globe with spinning longitude theta.
+    Renders an orthographic 3D ASCII/Unicode holographic globe with spinning longitude theta and zoom scale.
     Returns a list of rendered lines.
     """
+    radius_y = max(4, int(round(radius_y * zoom)))
+    radius_x = max(8, int(round(radius_x * zoom)))
     lines = []
     aspect = radius_x / radius_y
     tilt = 0.35  # ~20 deg axial tilt
@@ -167,9 +169,9 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
-def render_full_stark_hud(theta: float = 0.0, con: sqlite3.Connection | None = None) -> str:
+def render_full_stark_hud(theta: float = 0.0, zoom: float = 1.0, con: sqlite3.Connection | None = None) -> str:
     """Generates the complete StarkTech J.A.R.V.I.S. Atmospheric Recon Terminal Cockpit."""
-    globe_lines = render_ascii_globe(theta=theta, radius_y=7, radius_x=15)
+    globe_lines = render_ascii_globe(theta=theta, zoom=zoom)
 
     # Read DB state if available
     open_trades_count = 0
@@ -208,10 +210,12 @@ def render_full_stark_hud(theta: float = 0.0, con: sqlite3.Connection | None = N
     # Combine globe and telemetry side-by-side
     combined_rows = []
     max_rows = max(len(globe_lines), len(side_telemetry))
+    globe_width = max(len(_strip_ansi(line)) for line in globe_lines) if globe_lines else 31
     for i in range(max_rows):
-        g_line = globe_lines[i] if i < len(globe_lines) else " " * 31
+        g_line = globe_lines[i] if i < len(globe_lines) else " " * globe_width
+        pad = " " * max(0, globe_width - len(_strip_ansi(g_line)))
         t_line = side_telemetry[i] if i < len(side_telemetry) else ""
-        combined_rows.append(f"{g_line}   {t_line}")
+        combined_rows.append(f"{g_line}{pad}   {t_line}")
 
     # Header banner
     banner = [
@@ -234,7 +238,7 @@ def render_full_stark_hud(theta: float = 0.0, con: sqlite3.Connection | None = N
     return out
 
 
-def live_hud_loop(duration_secs: int = 15) -> None:
+def live_hud_loop(duration_secs: int = 15, zoom: float = 1.0) -> None:
     """Animates a live rotating Tony Stark holographic globe in the terminal."""
     from src.config import DB_PATH
     import src.paper as paper
@@ -252,7 +256,7 @@ def live_hud_loop(duration_secs: int = 15) -> None:
     try:
         while time.time() - start_time < duration_secs:
             theta = step * 0.12
-            frame = render_full_stark_hud(theta=theta, con=con)
+            frame = render_full_stark_hud(theta=theta, zoom=zoom, con=con)
             # Move cursor to home (top-left) without clearing to prevent flicker
             sys.stdout.write("\033[H")
             sys.stdout.write(frame)
@@ -270,13 +274,18 @@ def live_hud_loop(duration_secs: int = 15) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--live":
-        live_hud_loop(duration_secs=20)
+    import argparse
+    parser = argparse.ArgumentParser(description="Tony Stark HUD")
+    parser.add_argument("--live", action="store_true", help="Live rotating globe loop")
+    parser.add_argument("--zoom", type=float, default=1.0, help="Zoom scale factor for ASCII globe (0.7 to 2.0)")
+    args = parser.parse_args()
+
+    from src.config import DB_PATH
+    import src.paper as paper
+    con = paper.connect(DB_PATH) if DB_PATH.exists() else None
+    if args.live:
+        live_hud_loop(duration_secs=20, zoom=args.zoom)
     else:
-        # Single instant snapshot
-        from src.config import DB_PATH
-        import src.paper as paper
-        con = paper.connect(DB_PATH) if DB_PATH.exists() else None
-        print(render_full_stark_hud(theta=0.8, con=con))
-        if con:
-            con.close()
+        print(render_full_stark_hud(theta=0.8, zoom=args.zoom, con=con))
+    if con:
+        con.close()

@@ -68,6 +68,7 @@ def main():
 
     hud_parser = subparsers.add_parser("hud", help="Launch Tony Stark J.A.R.V.I.S. holographic terminal HUD")
     hud_parser.add_argument("--live", action="store_true", help="Run animated live rotation loop")
+    hud_parser.add_argument("--zoom", type=float, default=1.0, help="Zoom scale factor for ASCII globe (0.7 to 2.0)")
 
     subparsers.add_parser("selftest", help="Run offline unit tests")
 
@@ -86,10 +87,11 @@ def main():
             print(f"Scan complete. Trades executed: {count}")
         elif args.command == "hud":
             from src.hud import live_hud_loop, render_full_stark_hud
+            zoom_val = getattr(args, "zoom", 1.0)
             if getattr(args, "live", False):
-                live_hud_loop(duration_secs=20)
+                live_hud_loop(duration_secs=20, zoom=zoom_val)
             else:
-                print(render_full_stark_hud(theta=0.8, con=con))
+                print(render_full_stark_hud(theta=0.8, zoom=zoom_val, con=con))
         elif args.command == "monitor":
             is_live = bool(args.live or LIVE)
             exits = monitor_and_exit_positions(con, is_live=is_live, dry_run=args.dry_run)
