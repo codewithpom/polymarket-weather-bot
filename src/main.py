@@ -18,6 +18,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import src.paper as paper
 from src.scanner import scan_and_execute, grade_settled_trades
 from src.position_monitor import monitor_and_exit_positions
@@ -56,7 +62,13 @@ def main():
     monitor_parser.add_argument("--dry-run", action="store_true", help="Simulate exits without closing trades")
 
     subparsers.add_parser("grade", help="Grade settled paper trades")
-    subparsers.add_parser("report", help="Print performance report")
+
+    report_parser = subparsers.add_parser("report", help="Print performance report")
+    report_parser.add_argument("--hud", action="store_true", help="Render StarkTech holographic HUD with 3D globe")
+
+    hud_parser = subparsers.add_parser("hud", help="Launch Tony Stark J.A.R.V.I.S. holographic terminal HUD")
+    hud_parser.add_argument("--live", action="store_true", help="Run animated live rotation loop")
+
     subparsers.add_parser("selftest", help="Run offline unit tests")
 
     args = parser.parse_args()
@@ -72,6 +84,12 @@ def main():
             print(f"Starting market scan (Mode: {'LIVE' if is_live else 'PAPER'})...")
             count = scan_and_execute(con, is_live=is_live)
             print(f"Scan complete. Trades executed: {count}")
+        elif args.command == "hud":
+            from src.hud import live_hud_loop, render_full_stark_hud
+            if getattr(args, "live", False):
+                live_hud_loop(duration_secs=20)
+            else:
+                print(render_full_stark_hud(theta=0.8, con=con))
         elif args.command == "monitor":
             is_live = bool(args.live or LIVE)
             exits = monitor_and_exit_positions(con, is_live=is_live, dry_run=args.dry_run)
@@ -82,6 +100,9 @@ def main():
             print(f"Grading complete. Trades settled: {count}")
             paper.report(con)
         elif args.command == "report":
+            if getattr(args, "hud", False):
+                from src.hud import render_full_stark_hud
+                print(render_full_stark_hud(theta=0.8, con=con))
             paper.report(con)
         else:
             # Default behavior: Grade -> Monitor/Exit -> Scan -> Report
