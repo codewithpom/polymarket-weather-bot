@@ -15,7 +15,7 @@ from urllib3.util.retry import Retry
 from src.config import (
     GAMMA_API, CLOB_API, ENSEMBLE_API, ENSEMBLE_MODELS,
     RESOLUTION_SOURCES, CITY_CALIB, MODEL_COORDS, BUCKET_WIDTH,
-    MIN_EDGE_AFTER_FEE, USE_AWS_DIRECT,
+    MIN_EDGE_AFTER_FEE, USE_AWS_DIRECT, GATED_CITIES,
 )
 from src.aws_weather import aws_gefs_daily_max
 from src.fees import taker_fee
@@ -206,7 +206,7 @@ def scan_and_execute(con: sqlite3.Connection, is_live: bool = False) -> int:
     for event in events:
         title = event.get("title", "")
         city = next((c for c in RESOLUTION_SOURCES if c in title.lower()), None)
-        if not city:
+        if not city or city in GATED_CITIES:
             continue
 
         bias, smear = CITY_CALIB[city]

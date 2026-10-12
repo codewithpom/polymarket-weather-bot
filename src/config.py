@@ -78,6 +78,10 @@ RESOLUTION_SOURCES = {
     },
 }
 
+# Gated / Blocked cities excluded from real-time scanning and trading
+# Hong Kong: HKO published data has 30-day monthly lag; cannot settle same-day
+GATED_CITIES = {"hong kong"}
+
 # Empirical walk-forward calibration parameters (bias, smear) in native units
 CITY_CALIB = {
     "nyc": (-0.5, 1.5),        # LGA  F  bias=-0.45, stdev=2.55 (+14.4% Brier skill)
