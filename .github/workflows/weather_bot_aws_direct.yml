@@ -22,6 +22,7 @@ on:
         options:
           - all
           - scan
+          - monitor
           - grade
           - report
           - selftest
@@ -87,6 +88,8 @@ jobs:
             python src/main.py selftest
           elif [ "$ACTION" = "grade" ]; then
             python src/main.py grade
+          elif [ "$ACTION" = "monitor" ]; then
+            python src/main.py monitor
           elif [ "$ACTION" = "scan" ]; then
             python src/main.py scan
           elif [ "$ACTION" = "report" ]; then
@@ -94,8 +97,9 @@ jobs:
           elif [ "$ACTION" = "benchmark" ]; then
             python tools/benchmark_aws_vs_openmeteo.py --city nyc
           else
-            # Default pipeline: Grade settled -> Scan & trade -> Report
+            # Default pipeline: Grade settled -> Monitor & early-exit -> Scan & trade -> Report
             python src/main.py grade
+            python src/main.py monitor
             python src/main.py scan
             python src/main.py report
           fi
