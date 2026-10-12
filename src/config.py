@@ -25,6 +25,8 @@ FORCE_LIVE = int(os.getenv("FORCE_LIVE", "0"))
 MIN_EDGE_AFTER_FEE = float(os.getenv("MIN_EDGE_AFTER_FEE", "0.04"))
 USE_AWS_DIRECT = int(os.getenv("USE_AWS_DIRECT", "1"))
 AWS_GEFS_S3_BASE = "https://noaa-gefs-pds.s3.amazonaws.com"
+AWS_HRRR_S3_BASE = "https://noaa-hrrr-bdp-pds.s3.amazonaws.com"
+AWS_ECMWF_S3_BASE = "https://ecmwf-forecasts.s3.amazonaws.com"
 AWS_GEFS_MEMBERS = int(os.getenv("AWS_GEFS_MEMBERS", "30"))
 
 # API Endpoints
@@ -76,6 +78,36 @@ RESOLUTION_SOURCES = {
         "unit": "C", "precision": 0.1,
         "source_url": "https://www.weather.gov.hk/en/cis/climat.htm",
     },
+    "chicago": {
+        "adapter": "metar", "station": "KORD", "network": "IL_ASOS", "icao": "KORD",
+        "lat": 41.9742, "lon": -87.9073, "tz": "America/Chicago",
+        "unit": "F", "precision": 1.0,
+        "source_url": "https://www.wunderground.com/history/daily/us/il/chicago/KORD",
+    },
+    "los angeles": {
+        "adapter": "metar", "station": "LAX", "network": "CA_ASOS", "icao": "KLAX",
+        "lat": 33.9425, "lon": -118.4081, "tz": "America/Los_Angeles",
+        "unit": "F", "precision": 1.0,
+        "source_url": "https://www.wunderground.com/history/daily/us/ca/los-angeles/KLAX",
+    },
+    "san francisco": {
+        "adapter": "metar", "station": "SFO", "network": "CA_ASOS", "icao": "KSFO",
+        "lat": 37.6213, "lon": -122.3790, "tz": "America/Los_Angeles",
+        "unit": "F", "precision": 1.0,
+        "source_url": "https://www.wunderground.com/history/daily/us/ca/san-francisco/KSFO",
+    },
+    "paris": {
+        "adapter": "metar", "station": "LFPG", "network": "FR__ASOS", "icao": "LFPG",
+        "lat": 49.0097, "lon": 2.5479, "tz": "Europe/Paris",
+        "unit": "C", "precision": 1.0,
+        "source_url": "https://www.wunderground.com/history/daily/fr/roissy-en-france/LFPG",
+    },
+    "tokyo": {
+        "adapter": "metar", "station": "RJTT", "network": "JP__ASOS", "icao": "RJTT",
+        "lat": 35.5494, "lon": 139.7798, "tz": "Asia/Tokyo",
+        "unit": "C", "precision": 1.0,
+        "source_url": "https://www.wunderground.com/history/daily/jp/ota/RJTT",
+    },
 }
 
 # Gated / Blocked cities excluded from real-time scanning and trading
@@ -90,6 +122,11 @@ CITY_CALIB = {
     "beijing": (+1.0, 0.8),    # ZBAA C  bias=+0.99, stdev=1.34 (+10.9% skill)
     "hong kong": (+1.6, 0.7),  # HKO  C  bias=+1.59, stdev=1.22
     "seoul": (+0.4, 0.8),      # Gimpo/Inland cell bias=+0.38, stdev=1.31 (+19.4% skill)
+    "chicago": (-0.5, 1.5),
+    "los angeles": (+0.2, 1.3),
+    "san francisco": (+0.1, 1.4),
+    "paris": (+0.2, 0.8),
+    "tokyo": (+0.3, 0.9),
 }
 
 # Terrestrial model query coordinates (inland Gimpo for Seoul eliminates water grid bias)
@@ -100,12 +137,19 @@ MODEL_COORDS = {
     "beijing": (40.0801, 116.5846),
     "hong kong": (22.3019, 114.1741),
     "seoul": (37.56, 126.79),
+    "chicago": (41.9742, -87.9073),
+    "los angeles": (33.9425, -118.4081),
+    "san francisco": (37.6213, -122.3790),
+    "paris": (49.0097, 2.5479),
+    "tokyo": (35.5494, 139.7798),
 }
 
 # Contract bucket width per city: 2.0 for Fahrenheit, 1.0 for Celsius
 BUCKET_WIDTH = {
     "nyc": 2.0, "miami": 2.0, "london": 1.0,
-    "beijing": 1.0, "hong kong": 1.0, "seoul": 1.0
+    "beijing": 1.0, "hong kong": 1.0, "seoul": 1.0,
+    "chicago": 2.0, "los angeles": 2.0, "san francisco": 2.0,
+    "paris": 1.0, "tokyo": 1.0,
 }
 
 # Institutional risk limits

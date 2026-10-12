@@ -2,7 +2,7 @@
 Station ground-truth scraper for official settlement resolution stations.
 
 Sources:
-- METAR (Iowa State Mesonet ASOS archive): LGA, MIA, EGLC, RKSI, ZBAA.
+- METAR (Iowa State Mesonet ASOS archive): LGA, MIA, EGLC, RKSI, ZBAA, KORD, LAX, SFO, LFPG, RJTT.
 - HKO (Hong Kong Observatory open data extract): HKO.
 """
 

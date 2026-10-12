@@ -19,10 +19,24 @@ from src.config import (
     AWS_GEFS_MEMBERS,
     MODEL_COORDS,
     RESOLUTION_SOURCES,
+    ENSEMBLE_API,
+    ENSEMBLE_MODELS,
 )
 
 # Global eccodes thread lock (eccodes C library definitions are not thread-safe across threads)
 _ECCODES_LOCK = threading.Lock()
+
+# Sub-engine imports for unified multi-model routing
+from src.aws_hrrr import (
+    aws_hrrr_daily_max,
+    clear_hrrr_caches,
+    is_us_city,
+    HRRR_US_CITIES,
+)
+from src.aws_ecmwf import (
+    aws_ecmwf_daily_max,
+    clear_ecmwf_caches,
+)
 
 # Reusable HTTP session with pooling and retries
 _SESSION = requests.Session()
@@ -45,12 +59,14 @@ _CYCLE_CACHE_TTL = 300.0  # 5 minutes
 
 
 def clear_caches() -> None:
-    """Clears in-memory caches (useful in testing and reset)."""
+    """Clears in-memory caches across all AWS ingestion engines."""
     global _LATEST_CYCLE_CACHE, _LATEST_CYCLE_TIMESTAMP
     _DAILY_MAX_CACHE.clear()
     _IDX_CACHE.clear()
     _LATEST_CYCLE_CACHE = None
     _LATEST_CYCLE_TIMESTAMP = 0.0
+    clear_hrrr_caches()
+    clear_ecmwf_caches()
 
 
 def get_latest_gefs_cycle(s3_base: str = AWS_GEFS_S3_BASE, timeout: int = 5) -> tuple[str, str]:
@@ -234,3 +250,154 @@ def aws_gefs_daily_max(
 
     _DAILY_MAX_CACHE[cache_key] = member_maxes
     return member_maxes
+
+
+def fallback_open_meteo_daily_max(
+    lat: float,
+    lon: float,
+    date: str,
+    unit: str,
+    timeout: int = 30,
+) -> list[float]:
+    """
+    Queries Open-Meteo ensemble API as graceful fallback if AWS direct is unavailable.
+    Returns list of daily max temperatures for all ensemble members.
+    """
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "models": ENSEMBLE_MODELS,
+        "hourly": "temperature_2m",
+        "temperature_unit": unit.strip().lower(),
+        "start_date": date,
+        "end_date": date,
+        "timezone": "auto",
+    }
+    for attempt in range(2):
+        try:
+            r = _SESSION.get(ENSEMBLE_API, params=params, timeout=timeout)
+            r.raise_for_status()
+            hourly = r.json().get("hourly", {})
+            maxes: list[float] = []
+            for key, vals in hourly.items():
+                if key.startswith("temperature_2m") and vals and any(v is not None for v in vals):
+                    valid = [float(v) for v in vals if v is not None]
+                    if valid:
+                        maxes.append(max(valid))
+            if maxes:
+                return maxes
+        except Exception as e:
+            if attempt == 1:
+                print(f"[Open-Meteo Fallback] Attempt failed: {e}")
+    return []
+
+
+def aws_unified_daily_max(
+    city: str,
+    date: str,
+    unit: str,
+    prefer_hrrr_short_range: bool = True,
+    include_ecmwf: bool = True,
+    include_gefs: bool = True,
+    fallback_to_open_meteo: bool = True,
+    num_gefs_members: int = AWS_GEFS_MEMBERS,
+    lead_hours: float | None = None,
+    models: list[str] | None = None,
+) -> list[float]:
+    """
+    Unified multi-model ingestion router:
+    - For US cities: HRRR can be queried for high-resolution short-range (<24h).
+    - GEFS / ECMWF provides multi-model global coverage.
+    - If AWS direct fails or data is not yet published, gracefully falls back
+      to Open-Meteo ensemble without crashing.
+    """
+    city_clean = city.strip().lower().replace("_", " ")
+
+    # Resolve coordinates and timezone
+    if city_clean in RESOLUTION_SOURCES:
+        info = RESOLUTION_SOURCES[city_clean]
+        lat, lon = info["lat"], info["lon"]
+        tz_name = info["tz"]
+    elif city_clean in HRRR_US_CITIES:
+        info = HRRR_US_CITIES[city_clean]
+        lat, lon = info["lat"], info["lon"]
+        tz_name = info["tz"]
+    elif city_clean in MODEL_COORDS:
+        lat, lon = MODEL_COORDS[city_clean]
+        tz_name = "America/New_York"
+    else:
+        raise ValueError(f"City '{city}' not recognized in weather models.")
+
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = dt.timezone.utc
+
+    now_local = dt.datetime.now(tz)
+    target_d = dt.date.fromisoformat(date)
+    if lead_hours is None:
+        target_start = dt.datetime.combine(target_d, dt.time(0, 0), tzinfo=tz)
+        calc_lead_hours = (target_start - now_local).total_seconds() / 3600.0
+    else:
+        calc_lead_hours = lead_hours
+
+    is_short_range = (calc_lead_hours < 24.0) or (target_d == now_local.date())
+    is_us = is_us_city(city_clean)
+
+    # Determine which models to query
+    if models is not None:
+        selected_models = [m.lower() for m in models]
+    else:
+        selected_models = []
+        if is_us and is_short_range and prefer_hrrr_short_range:
+            selected_models.append("hrrr")
+        if include_ecmwf:
+            selected_models.append("ecmwf")
+        if include_gefs:
+            selected_models.append("gefs")
+
+    members: list[float] = []
+    aws_errors: list[str] = []
+
+    # 1. NOAA HRRR (high-res US short range)
+    if "hrrr" in selected_models:
+        try:
+            hrrr_val = aws_hrrr_daily_max(city=city_clean, date=date, unit=unit)
+            members.append(hrrr_val)
+        except Exception as e:
+            aws_errors.append(f"HRRR ({e})")
+
+    # 2. ECMWF Open Data (global 0.25°)
+    if "ecmwf" in selected_models:
+        try:
+            ecmwf_val = aws_ecmwf_daily_max(city=city_clean, date=date, unit=unit)
+            members.append(ecmwf_val)
+        except Exception as e:
+            aws_errors.append(f"ECMWF ({e})")
+
+    # 3. NOAA GEFS (global ensemble)
+    if "gefs" in selected_models:
+        try:
+            gefs_vals = aws_gefs_daily_max(city=city_clean, date=date, unit=unit, num_members=num_gefs_members)
+            members.extend(gefs_vals)
+        except Exception as e:
+            aws_errors.append(f"GEFS ({e})")
+
+    # Fallback to Open-Meteo ensemble if no AWS direct members succeeded
+    if not members:
+        if aws_errors:
+            print(f"[AWS Direct] Models failed for {city}: {'; '.join(aws_errors)}")
+        if fallback_to_open_meteo:
+            print(f"[AWS Direct] Fallback to Open-Meteo ensemble for {city} on {date}")
+            try:
+                members = fallback_open_meteo_daily_max(lat=lat, lon=lon, date=date, unit=unit)
+            except Exception as e:
+                print(f"[Open-Meteo Fallback] query failed: {e}")
+                members = []
+
+    return members
+
+
+# Unified aliases
+unified_weather_daily_max = aws_unified_daily_max
+aws_multi_model_daily_max = aws_unified_daily_max
