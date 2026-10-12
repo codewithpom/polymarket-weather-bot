@@ -7,6 +7,7 @@ import json
 import sqlite3
 import time
 from src.config import DB_PATH, HALT_FILE, FORCE_LIVE
+from src.fees import taker_fee
 
 MIN_TRADES = 50
 MIN_DAYS = 14
@@ -93,6 +94,59 @@ def grade(con: sqlite3.Connection, trade_id: int, outcome: int, graded_ts: float
         con.execute("UPDATE paper_trades SET outcome=?, graded_ts=?, pnl=? WHERE id=?",
                     (outcome, now, pnl, trade_id))
     return pnl
+
+
+def close_trade(
+    con: sqlite3.Connection,
+    trade_id: int,
+    exit_price: float,
+    exit_reason: str,
+    exit_ts: float | None = None,
+) -> float:
+    """
+    Closes an open position early on the CLOB.
+    Realizes PnL = size * exit_price - size * entry_price - entry_fee - exit_fee.
+    Marks outcome as 1 (if profitable) or 0 (if loss) to release active market risk,
+    and records exit details in meta and pnl.
+    """
+    if not (0.0 <= exit_price <= 1.0):
+        raise ValueError(f"Exit price must be in [0, 1], got {exit_price}")
+
+    row = con.execute("SELECT outcome, price, size, fee_est, meta FROM paper_trades WHERE id=?", (trade_id,)).fetchone()
+    if not row:
+        raise KeyError(f"Trade {trade_id} not found")
+    if row["outcome"] is not None:
+        raise RuntimeError(f"Trade {trade_id} already settled with outcome {row['outcome']}")
+
+    now = exit_ts if exit_ts is not None else time.time()
+    size = row["size"]
+    entry_price = row["price"]
+    entry_fee = row["fee_est"]
+    exit_fee = taker_fee(size, exit_price, "weather")
+
+    realized_pnl = size * exit_price - size * entry_price - entry_fee - exit_fee
+    binary_outcome = 1 if realized_pnl > 0.0 else 0
+
+    try:
+        meta_dict = json.loads(row["meta"]) if row["meta"] else {}
+    except Exception:
+        meta_dict = {}
+    meta_dict["exit"] = {
+        "exit_price": exit_price,
+        "exit_fee": exit_fee,
+        "exit_reason": exit_reason,
+        "exit_ts": now,
+        "early_exit": True,
+    }
+
+    with con:
+        con.execute("""
+            UPDATE paper_trades
+            SET outcome=?, graded_ts=?, pnl=?, meta=?
+            WHERE id=?
+        """, (binary_outcome, now, realized_pnl, json.dumps(meta_dict), trade_id))
+
+    return realized_pnl
 
 
 def brier_score(con: sqlite3.Connection, strategy: str) -> tuple[float, float, int]:

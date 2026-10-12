@@ -111,6 +111,27 @@ def daily_max(city: str, date: dt.date | str) -> float:
     return round(round(raw / step) * step, 1)
 
 
+def daily_max_so_far(city: str, date: dt.date | str) -> float | None:
+    """
+    Returns the maximum temperature recorded so far today from METAR ASOS observations,
+    or None if no observations are available. Does not raise NoStationData.
+    """
+    if isinstance(date, str):
+        date = dt.date.fromisoformat(date)
+    src = RESOLUTION_SOURCES.get(city)
+    if not src or src.get("adapter") != "metar":
+        return None
+    try:
+        obs = _metar_obs(src, date)
+        if not obs:
+            return None
+        step = src["precision"]
+        raw = max(obs)
+        return round(round(raw / step) * step, 1)
+    except Exception:
+        return None
+
+
 def daily_max_range(city: str, start: dt.date, end: dt.date) -> dict[str, float]:
     """{date_iso: daily_max} over [start, end] inclusive in native units."""
     src = RESOLUTION_SOURCES[city]

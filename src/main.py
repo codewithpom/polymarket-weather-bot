@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 
 import src.paper as paper
 from src.scanner import scan_and_execute, grade_settled_trades
+from src.position_monitor import monitor_and_exit_positions
 from src.config import LIVE, FORCE_LIVE
 import src.supabase_sync as supabase_sync
 
@@ -50,6 +51,10 @@ def main():
     scan_parser = subparsers.add_parser("scan", help="Scan markets and trade")
     scan_parser.add_argument("--live", action="store_true", help="Attempt live execution")
 
+    monitor_parser = subparsers.add_parser("monitor", help="Monitor open positions and execute early exits")
+    monitor_parser.add_argument("--live", action="store_true", help="Attempt live execution")
+    monitor_parser.add_argument("--dry-run", action="store_true", help="Simulate exits without closing trades")
+
     subparsers.add_parser("grade", help="Grade settled paper trades")
     subparsers.add_parser("report", help="Print performance report")
     subparsers.add_parser("selftest", help="Run offline unit tests")
@@ -67,6 +72,10 @@ def main():
             print(f"Starting market scan (Mode: {'LIVE' if is_live else 'PAPER'})...")
             count = scan_and_execute(con, is_live=is_live)
             print(f"Scan complete. Trades executed: {count}")
+        elif args.command == "monitor":
+            is_live = bool(args.live or LIVE)
+            exits = monitor_and_exit_positions(con, is_live=is_live, dry_run=args.dry_run)
+            print(f"Monitor complete. Exits executed: {len(exits)}")
         elif args.command == "grade":
             print("Grading settled trades from station truth...")
             count = grade_settled_trades(con)
@@ -75,10 +84,12 @@ def main():
         elif args.command == "report":
             paper.report(con)
         else:
-            # Default behavior: grade, scan, report
-            print("Default pipeline: Grade -> Scan -> Report")
+            # Default behavior: Grade -> Monitor/Exit -> Scan -> Report
+            print("Default pipeline: Grade -> Monitor/Exit -> Scan -> Report")
             g_count = grade_settled_trades(con)
             print(f"Settled {g_count} trades.")
+            exits = monitor_and_exit_positions(con, is_live=bool(LIVE), dry_run=False)
+            print(f"Processed {len(exits)} early exits.")
             s_count = scan_and_execute(con, is_live=bool(LIVE))
             print(f"Executed {s_count} trades.")
             paper.report(con)
