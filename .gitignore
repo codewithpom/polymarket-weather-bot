@@ -28,3 +28,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Rust
+target/
+rust/target/
+
