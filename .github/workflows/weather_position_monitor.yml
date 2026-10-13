@@ -2,8 +2,8 @@ name: Polymarket Weather Intra-Day Position Monitor & Early Exit
 
 on:
   schedule:
-    # Run hourly at minute 15 (offset from the top of the hour to capture fresh METAR reports):
-    - cron: '15 * * * *'
+    # Run every 15 minutes to capture fresh METAR reports and execute early exits:
+    - cron: '*/15 * * * *'
 
   workflow_dispatch:
     inputs:
