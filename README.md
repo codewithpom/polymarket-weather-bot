@@ -131,3 +131,15 @@ python src/main.py
 * **Single-Trade Cap**: Strictly limits any individual position to **2.0% of bankroll**.
 * **Daily Drawdown Stop**: If realized trailing 24h loss exceeds **5.0%**, the engine automatically trips `data/HALT` and blocks execution.
 * **Rolling Brier Circuit Breaker**: Evaluates the trailing 100 graded trades; trips `data/HALT` if model calibration degrades to market levels.
+
+## 6. Live Data
+
+* **Source of truth**: `data/paper.db` (SQLite, table `paper_trades`), committed to `main` by the workflow `git-auto-commit` step after each run.
+* **Supabase mirror**: `src/supabase_sync.py` upserts every `paper_trades` row (on `id`) into `public.weather_trades` over PostgREST (`POST {SUPABASE_URL}/rest/v1/weather_trades?on_conflict=id`). Requires repo secrets/vars `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`; without them the sync is silently skipped.
+* **Query it**:
+  ```bash
+  curl "$SUPABASE_URL/rest/v1/weather_trades?select=id,ts,market,side,price,pnl&order=id.desc&limit=20"     -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY"
+  ```
+  Or locally: `sqlite3 data/paper.db "select * from paper_trades order by id desc limit 20"`.
+* **Stalled trading?** Runs can succeed while placing nothing if `data/HALT` exists (the scanner prints `Trading HALTED`). Delete the file and commit once the cause (daily loss or Brier breaker) is understood.
+
